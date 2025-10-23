@@ -3,6 +3,7 @@
 
 import torch
 import os
+import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
@@ -15,33 +16,39 @@ class preprocessing():
 
     def to_long(x):
         return x.long()
+    
 
+class DiceLoss(nn.Module):
+    """Dice Loss for multi-class segmentation."""
+    def __init__(self, eps=1e-6):
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, outputs, targets):
+        """
+        outputs: [B, C, H, W] raw logits
+        targets: [B, H, W] integer class labels
+        """
+        num_classes = outputs.shape[1]
+        # Hard one-hot encoding of targets
+        targets_onehot = F.one_hot(targets, num_classes).permute(0,3,1,2).float()
+
+        # Probabilities
+        probs = F.softmax(outputs, dim=1)
+
+        # Compute per-class Dice
+        dims = (0,2,3)  # sum over batch + H + W
+        intersection = torch.sum(probs * targets_onehot, dims)
+        cardinality = torch.sum(probs + targets_onehot, dims)
+        dice_per_class = (2 * intersection + self.eps) / (cardinality + self.eps)
+
+        # Average over classes
+        return 1 - dice_per_class.mean()
+    
 class metrics():
     @staticmethod
-    def dice_coeff(pred, target, eps=1e-6):
-        """
-        pred: [B, C, H, W] (raw logits or probabilities)
-        target: [B, H, W] (integer class labels)
-        """
-        # Apply softmax if not yet normalized
-        if pred.shape[1] > 1:
-            pred = F.softmax(pred, dim=1)
-        
-        # One-hot encode target
-        num_classes = pred.shape[1]
-        target_onehot = F.one_hot(target, num_classes).permute(0, 3, 1, 2).float()
-
-        # Compute Dice per class
-        dims = (0, 2, 3)
-        intersection = torch.sum(pred * target_onehot, dims)
-        cardinality = torch.sum(pred + target_onehot, dims)
-
-        dice_per_class = (2. * intersection + eps) / (cardinality + eps)
-        return dice_per_class.mean()  # mean over classes
-
-    @staticmethod
-    def dice_loss(pred, target, eps=1e-6):
-        return 1 - metrics.dice_coeff(pred, target, eps)
+    def dice_coeff():
+        pass
         
 class visualize():
     @staticmethod

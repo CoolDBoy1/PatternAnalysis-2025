@@ -2,7 +2,7 @@ import sys, os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import torch
-import torch.nn as nn
+import torch.nn.functional as F
 from torch.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 from torchvision import transforms
@@ -10,7 +10,7 @@ from tqdm import tqdm
 from PIL import Image
 from dataset import OASIS2DDataset
 from modules import ImprovedUNet
-from utils import metrics, preprocessing
+from utils import DiceLoss, preprocessing
 
 def train_loop(
     data_dir="PatternAnalysis-2025/recognition/OASIS",
@@ -18,8 +18,8 @@ def train_loop(
     num_classes=4,
     in_channels=1,
     batch_size=24,
-    num_epochs=20,
-    learning_rate=1e-4,
+    num_epochs=10,
+    learning_rate=1e-3,
 ):
     """
     Train an Improved UNet on the 2D OASIS dataset.
@@ -46,17 +46,17 @@ def train_loop(
     # Training transforms with augmentation
     train_transform_img = transforms.Compose([
         transforms.Resize((256,256)),
-        transforms.RandomHorizontalFlip(p=0.5),  # 50% chance to flip
-        transforms.RandomVerticalFlip(p=0.5),    # 50% chance to flip
-        transforms.RandomRotation(degrees=15),   # random rotation ±15°
+        # transforms.RandomHorizontalFlip(p=0.5),  # 50% chance to flip
+        # transforms.RandomVerticalFlip(p=0.5),    # 50% chance to flip
+        # transforms.RandomRotation(degrees=15),   # random rotation ±15°
         transforms.ToTensor()
     ])
 
     train_transform_mask = transforms.Compose([
         transforms.Resize((256,256), interpolation=Image.NEAREST),
-        transforms.RandomHorizontalFlip(p=0.5),  # must match image flip
-        transforms.RandomVerticalFlip(p=0.5),    # must match image flip
-        transforms.RandomRotation(degrees=15),   # must match image rotation
+        # transforms.RandomHorizontalFlip(p=0.5),  # must match image flip
+        # transforms.RandomVerticalFlip(p=0.5),    # must match image flip
+        # transforms.RandomRotation(degrees=15),   # must match image rotation
         transforms.PILToTensor(),
         transforms.Lambda(preprocessing.squeeze_channel),
         transforms.Lambda(preprocessing.label_map),
@@ -99,9 +99,9 @@ def train_loop(
 
     # Model, Loss, Optimizer
     model = ImprovedUNet(in_channels=in_channels, out_channels=num_classes).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3)
-    criterion = nn.CrossEntropyLoss()
+    criterion = DiceLoss()
     scaler = GradScaler(device=device)
 
     best_val_dice = 0.0
@@ -119,9 +119,7 @@ def train_loop(
             
             with autocast(device_type=device_type):
                 outputs = model(images)
-                ce_loss = criterion(outputs, masks.long())
-                d_loss = metrics.dice_loss(outputs, masks)
-                loss = ce_loss + d_loss
+                loss = criterion(outputs, masks.long())
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -141,8 +139,14 @@ def train_loop(
                 images, masks = images.to(device), masks.to(device)
                 with autocast(device_type=device_type):
                     outputs = model(images)
-                    dice_score = metrics.dice_coeff(outputs, masks)
-                    dice_scores.append(dice_score.item())
+                    preds = torch.argmax(F.softmax(outputs, dim=1), dim=1)
+
+                    for cls in range(outputs.shape[1]):
+                        pred_cls = (preds == cls).float()
+                        true_cls = (masks == cls).float()
+                        intersection = (pred_cls * true_cls).sum()
+                        dice = (2. * intersection) / (pred_cls.sum() + true_cls.sum() + 1e-8)
+                        dice_scores.append(dice.item())
 
         avg_val_dice = sum(dice_scores) / len(dice_scores)
         scheduler.step(avg_val_dice)

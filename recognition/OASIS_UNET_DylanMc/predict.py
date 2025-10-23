@@ -4,6 +4,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import torch
 from torch.amp import autocast
 from torch.utils.data import DataLoader
+import torch.nn.functional as F
 from tqdm import tqdm
 import numpy as np
 from torchvision import transforms
@@ -11,7 +12,7 @@ from PIL import Image
 
 from dataset import OASIS2DDataset
 from modules import ImprovedUNet
-from utils import metrics, visualize, preprocessing
+from utils import visualize, preprocessing
 
 def predict_loop(
     data_dir="PatternAnalysis-2025/recognition/OASIS",
@@ -80,10 +81,14 @@ def predict_loop(
 
             with autocast(device_type=device_type):
                 outputs = model(images)
-                preds = torch.argmax(outputs, dim=1)
+                preds = torch.argmax(F.softmax(outputs, dim=1), dim=1)
 
-                dice = metrics.dice_coeff(outputs, masks)
-                dice_scores.append(dice.detach())
+                for cls in range(outputs.shape[1]):
+                    pred_cls = (preds == cls).float()
+                    true_cls = (masks == cls).float()
+                    intersection = (pred_cls * true_cls).sum()
+                    dice = (2. * intersection) / (pred_cls.sum() + true_cls.sum() + 1e-8)
+                    dice_scores.append(dice.item())
 
             # Optional save
             np.save(os.path.join(output_dir, f"pred_{i}.npy"), preds.cpu().numpy())
@@ -92,7 +97,7 @@ def predict_loop(
             if i < 3:  # only first few for sanity check
                 visualize.save_prediction_mask(images, preds, masks, output_dir, i)
 
-    avg_dice = torch.stack(dice_scores).mean().item()
+    avg_dice = torch.tensor(dice_scores).mean().item()
     print(f"\nPrediction complete. Average Dice: {avg_dice:.4f}")
 
     return avg_dice
