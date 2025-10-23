@@ -2,15 +2,12 @@ import sys, os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import torch
-import torch.nn.functional as F
 from torch.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
-from torchvision import transforms
 from tqdm import tqdm
-from PIL import Image
 from dataset import OASIS2DDataset
 from modules import ImprovedUNet
-from utils import DiceLoss, preprocessing
+from utils import DiceLoss, preprocessing, metrics
 
 def train_loop(
     data_dir="PatternAnalysis-2025/recognition/OASIS",
@@ -44,52 +41,21 @@ def train_loop(
     os.makedirs(save_dir, exist_ok=True)
 
     # Training transforms with augmentation
-    train_transform_img = transforms.Compose([
-        transforms.Resize((256,256)),
-        # transforms.RandomHorizontalFlip(p=0.5),  # 50% chance to flip
-        # transforms.RandomVerticalFlip(p=0.5),    # 50% chance to flip
-        # transforms.RandomRotation(degrees=15),   # random rotation ±15°
-        transforms.ToTensor()
-    ])
-
-    train_transform_mask = transforms.Compose([
-        transforms.Resize((256,256), interpolation=Image.NEAREST),
-        # transforms.RandomHorizontalFlip(p=0.5),  # must match image flip
-        # transforms.RandomVerticalFlip(p=0.5),    # must match image flip
-        # transforms.RandomRotation(degrees=15),   # must match image rotation
-        transforms.PILToTensor(),
-        transforms.Lambda(preprocessing.squeeze_channel),
-        transforms.Lambda(preprocessing.label_map),
-        transforms.Lambda(preprocessing.to_long)
-    ])
-
-    # Validation / Test transforms (no augmentation)
-    val_transform_img = transforms.Compose([
-        transforms.Resize((256,256)),
-        transforms.ToTensor()
-    ])
-
-    val_transform_mask = transforms.Compose([
-        transforms.Resize((256,256), interpolation=Image.NEAREST),
-        transforms.PILToTensor(),
-        transforms.Lambda(preprocessing.squeeze_channel),
-        transforms.Lambda(preprocessing.label_map),
-        transforms.Lambda(preprocessing.to_long)
-    ])
+    transform_img, transform_mask = preprocessing.OASIS2Dtransforms
 
     # Datasets and Loaders
     train_dataset = OASIS2DDataset(
         image_dir=os.path.join(data_dir, "keras_png_slices_train"),
         mask_dir=os.path.join(data_dir, "keras_png_slices_seg_train"),
-        transform_img=train_transform_img,
-        transform_mask=train_transform_mask
+        transform_img=transform_img,
+        transform_mask=transform_mask
     )
 
     val_dataset = OASIS2DDataset(
         image_dir=os.path.join(data_dir, "keras_png_slices_validate"),
         mask_dir=os.path.join(data_dir, "keras_png_slices_seg_validate"),
-        transform_img=val_transform_img,
-        transform_mask=val_transform_mask
+        transform_img=transform_img,
+        transform_mask=transform_mask
     )
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, 
@@ -132,23 +98,7 @@ def train_loop(
         avg_train_loss = running_loss / len(train_loader)
 
         # Validation
-        model.eval()
-        dice_scores = []
-        with torch.no_grad():
-            for images, masks in val_loader:
-                images, masks = images.to(device), masks.to(device)
-                with autocast(device_type=device_type):
-                    outputs = model(images)
-                    preds = torch.argmax(F.softmax(outputs, dim=1), dim=1)
-
-                    for cls in range(outputs.shape[1]):
-                        pred_cls = (preds == cls).float()
-                        true_cls = (masks == cls).float()
-                        intersection = (pred_cls * true_cls).sum()
-                        dice = (2. * intersection) / (pred_cls.sum() + true_cls.sum() + 1e-8)
-                        dice_scores.append(dice.item())
-
-        avg_val_dice = sum(dice_scores) / len(dice_scores)
+        avg_val_dice = metrics.compute_dice(model, val_loader, device)
         scheduler.step(avg_val_dice)
 
         print(f"Epoch {epoch+1}: Train Loss={avg_train_loss:.4f}, Val Dice={avg_val_dice:.4f}")

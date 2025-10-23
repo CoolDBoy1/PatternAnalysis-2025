@@ -2,17 +2,11 @@ import sys, os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import torch
-from torch.amp import autocast
 from torch.utils.data import DataLoader
-import torch.nn.functional as F
-from tqdm import tqdm
-import numpy as np
-from torchvision import transforms
-from PIL import Image
 
 from dataset import OASIS2DDataset
 from modules import ImprovedUNet
-from utils import visualize, preprocessing
+from utils import visualize, preprocessing, metrics
 
 def predict_loop(
     data_dir="PatternAnalysis-2025/recognition/OASIS",
@@ -42,18 +36,7 @@ def predict_loop(
     os.makedirs(output_dir, exist_ok=True)
     
     # Transforms
-    test_transform_img = transforms.Compose([
-        transforms.Resize((256,256)),
-        transforms.ToTensor()
-    ])
-
-    test_transform_mask = transforms.Compose([
-        transforms.Resize((256,256), interpolation=Image.NEAREST),
-        transforms.PILToTensor(),
-        transforms.Lambda(preprocessing.squeeze_channel),
-        transforms.Lambda(preprocessing.label_map),
-        transforms.Lambda(preprocessing.to_long)
-    ])
+    test_transform_img, test_transform_mask = preprocessing.OASIS2Dtransforms
 
     # Dataset and Loader
     test_dataset = OASIS2DDataset(
@@ -70,34 +53,15 @@ def predict_loop(
     model = ImprovedUNet(in_channels=in_channels, out_channels=num_classes).to(device)
     state_dict = torch.load(model_path, map_location=device, weights_only=True)
     model.load_state_dict(state_dict)
-    model.eval()
-
-    dice_scores = []
-
-    # Inference loop
-    with torch.no_grad():
-        for i, (images, masks) in enumerate(tqdm(test_loader, desc="Predicting")):
-            images, masks = images.to(device, non_blocking=True), masks.to(device, non_blocking=True)
-
-            with autocast(device_type=device_type):
-                outputs = model(images)
-                preds = torch.argmax(F.softmax(outputs, dim=1), dim=1)
-
-                for cls in range(outputs.shape[1]):
-                    pred_cls = (preds == cls).float()
-                    true_cls = (masks == cls).float()
-                    intersection = (pred_cls * true_cls).sum()
-                    dice = (2. * intersection) / (pred_cls.sum() + true_cls.sum() + 1e-8)
-                    dice_scores.append(dice.item())
-
-            # Optional save
-            np.save(os.path.join(output_dir, f"pred_{i}.npy"), preds.cpu().numpy())
-
-            # Optional: visualize a few masks
-            if i < 3:  # only first few for sanity check
-                visualize.save_prediction_mask(images, preds, masks, output_dir, i)
-
-    avg_dice = torch.tensor(dice_scores).mean().item()
+    
+    # Eval model
+    avg_dice = metrics.compute_dice(
+        model,
+        test_loader,
+        device,
+        output_dir=output_dir,
+        visualize_fn=visualize.save_prediction_mask
+    )
     print(f"\nPrediction complete. Average Dice: {avg_dice:.4f}")
 
     return avg_dice
