@@ -1,7 +1,6 @@
 # modules.py
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 class PermuteForLN(nn.Module):
     def forward(self, x):
@@ -33,7 +32,7 @@ class ConvNeXtBlock3D(nn.Module):
 class ConvNeXt(nn.Module):
     def __init__(self, in_chans=1, num_classes=2, depths=[2,2,6,2], dims=[32,64,128,256]):
         super().__init__()
-        self.stem = nn.Conv3d(in_chans, dims[0], kernel_size=4, stride=4)  # downsample
+        self.stem = nn.Conv3d(in_chans, dims[0], kernel_size=(1,4,4), stride=(1,4,4))  # downsample
         self.stages = nn.ModuleList()
         for i in range(len(depths)):
             stage = nn.Sequential(
@@ -41,7 +40,7 @@ class ConvNeXt(nn.Module):
             )
             self.stages.append(stage)
             if i < len(depths) - 1:
-                self.stages.append(nn.Conv3d(dims[i], dims[i+1], kernel_size=2, stride=2))  # downsample
+                self.stages.append(nn.Conv3d(dims[i], dims[i+1], kernel_size=(1,2,2), stride=(1,2,2)))  # downsample
 
         self.global_pool = nn.AdaptiveAvgPool3d(1)
         self.head = nn.Linear(dims[-1], num_classes)
