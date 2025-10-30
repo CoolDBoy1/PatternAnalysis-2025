@@ -59,18 +59,22 @@ def get_datasets(option="train", num_slices=20, split_data=False, transform=None
     all_brains = ad_brains + nc_brains
     all_labels = ad_labels + nc_labels
 
+    base_transform = transforms.Compose([
+        transforms.Pad(padding=(0, 0, 16, 0)),  # pad width 240 to 256
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize([0.0324], [1.0224])
+    ])
+
     if transform == None:
-        transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-        ])
+        transform = base_transform
 
     if split_data:
         # Split into train/val (ensures no brain overlap)
         t_brains, val_brains, t_labels, val_labels = train_test_split(
             all_brains, all_labels, test_size=0.2, random_state=42, stratify=all_labels
         )
-        val_set = ADNIDataset(val_brains, val_labels, num_slices=num_slices, transform=transform)
+        val_set = ADNIDataset(val_brains, val_labels, num_slices=num_slices, transform=base_transform)
     else:
         t_brains, t_labels = all_brains, all_labels
         val_set = None
