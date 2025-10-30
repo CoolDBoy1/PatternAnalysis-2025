@@ -1,22 +1,22 @@
 # train.py
 import sys, os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
+from torch.amp import GradScaler, autocast
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torchvision import transforms
 from tqdm import tqdm
 
 from dataset import get_datasets
 from modules import ConvNeXt
-from utils import preprocessing, metrics
 
 def train_loop(
     save_dir="PatternAnalysis-2025/recognition/ADNI_ConvNeXt_DylanMc/checkpoints",
     num_epochs=20,
     num_workers=8, 
-    batch_size=2, 
+    batch_size=8, 
     in_chans=1,
     num_classes=2,
     lr=1e-4,
@@ -27,6 +27,13 @@ def train_loop(
     os.makedirs(save_dir, exist_ok=True)
     
     # Training transforms
+    train_transform = transforms.Compose([
+        transforms.Pad(padding=(0, 0, 16, 0)),  # pad width 240 to 256
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize([0.0324], [1.0224])
+    ])
+    
     train_set, val_set = get_datasets("train", num_slices=20, split_data=True)
     
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, 
@@ -37,7 +44,10 @@ def train_loop(
     # Model, Loss, Optimizer
     model = ConvNeXt(in_chans=in_chans, num_classes=num_classes).to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+    optimizer = optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-4)
+    scaler = GradScaler(device=device)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, 
+                                  threshold=1e-4, threshold_mode='rel', cooldown=1, min_lr=1e-6)
 
     best_val_acc = 0.0
     
@@ -54,10 +64,12 @@ def train_loop(
             y = y.to(device)
 
             optimizer.zero_grad()
-            outputs = model(x)
-            loss = criterion(outputs, y)
-            loss.backward()
-            optimizer.step()
+            with autocast(device_type=device_type):
+                outputs = model(x)
+                loss = criterion(outputs, y)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             running_loss += loss.item() * x.size(0)
             _, predicted = torch.max(outputs, 1)
@@ -80,8 +92,10 @@ def train_loop(
             for x, y in val_loop:
                 x = x.to(device)
                 y = y.to(device)
-                outputs = model(x)
-                loss = criterion(outputs, y)
+                
+                with autocast(device_type=device_type):
+                    outputs = model(x)
+                    loss = criterion(outputs, y)
                 val_loss += loss.item() * x.size(0)
                 _, predicted = torch.max(outputs, 1)
                 val_total += y.size(0)
@@ -91,6 +105,8 @@ def train_loop(
 
         val_loss /= val_total
         val_acc = val_correct / val_total
+        
+        scheduler.step(val_loss)
         
         print(f"Epoch [{epoch+1}/{num_epochs}] "
               f"Train Loss: {train_loss:.4f} Train Acc: {train_acc:.4f} "
@@ -107,9 +123,9 @@ def train_loop(
 
 if __name__ == "__main__":
     # preds
-    num_epochs=20
+    num_epochs=30
     num_workers=12
-    batch_size=12
+    batch_size=20
     in_chans=1
     num_classes=2
     lr=1e-4
