@@ -74,6 +74,10 @@ def train_loop(
                             num_workers=int(num_workers/12), pin_memory=True)
     
     # Model, Loss, Optimizer
+    # CrossEntropyLoss with label smoothing to improve generalization
+    # AdamW optimizer with weight decay for regularization
+    # GradScaler for mixed-precision training
+    # CosineAnnealingLR gradually reduces learning rate for better convergence
     model = ConvNeXt(in_chans=in_chans, num_classes=num_classes, drop_rate=drop_rate).to(device)
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=2e-4)
@@ -137,6 +141,7 @@ def train_loop(
         val_loss /= val_total
         val_acc = val_correct / val_total
         
+        # step scheduler
         scheduler.step()
         
         print(f"Epoch [{epoch+1}/{num_epochs}] "
@@ -153,13 +158,13 @@ def train_loop(
     return model, best_val_acc
 
 if __name__ == "__main__":
-    # preds
-    num_epochs=30
+    # parameters
+    num_epochs=100
     num_workers=12
     batch_size=32
     in_chans=1
     num_classes=2
-    lr=5e-4
+    lr=1e-4
     drop_rate=0.4
     train_loop(num_epochs=num_epochs, num_workers=num_workers, batch_size=batch_size, 
                in_chans=in_chans, num_classes=num_classes, lr=lr, drop_rate=drop_rate)

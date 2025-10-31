@@ -1,9 +1,6 @@
 # predict.py
 import sys, os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -79,7 +76,6 @@ def predict_loop(
     print(f"Confusion matrix saved to {out_path}")
 
     return acc, cm, report
-
 
 if __name__ == "__main__":
     # preds

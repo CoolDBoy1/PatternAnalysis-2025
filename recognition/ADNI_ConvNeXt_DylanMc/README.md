@@ -97,7 +97,7 @@ weighted avg     0.8092    0.8089    0.8089       450
 
 Test Accuracy: 80.89%
 
-
+![Confusion Matrix](https://github.com/CoolDBoy1/PatternAnalysis-2025/blob/topic-recognition/recognition/ADNI_ConvNeXt_DylanMc/confusion_matrix.png)
 
 
 ## Dependencies
@@ -114,8 +114,8 @@ Test Accuracy: 80.89%
 | `sys`, `os`      | —       | System and path handling (Python standard library)                 |
 
 ## reproducability
-Consistency of results varied greatly with it being very common for the model to get stuck in 65% accuracy range for the test data
+Consistency of results varied greatly with it being very common for the model to get stuck in 65% accuracy range for the test data, this is also due to how random seeds were used and on thos of that the results may fluctuate due to stochastic data augmentations and DropPath
 
 ## References
-Liu, Z., et al. (2022). A ConvNet for the 2020s (ConvNeXt). arXiv:2201.03545
-Loshchilov, I., & Hutter, F. (2019). Decoupled Weight Decay Regularization. ICLR
+[Liu et al., 2022](https://arxiv.org/abs/2201.03545)
+[Loshchilov & Hutter, 2019](https://arxiv.org/abs/1711.05101)
