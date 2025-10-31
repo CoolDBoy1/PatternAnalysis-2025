@@ -34,8 +34,9 @@ class ADNIDataset(Dataset):
         if len(slices) != self.num_slices:
             raise AssertionError(f"should be {self.num_slices} slices")
 
+        # Stack slices along depth dimension to form [C, D, H, W] for 3D CNN input, C = 1 because grayscale
         volume = torch.stack(slices, dim=1)
-        return volume, label  # [1, D, H, W] for 3D CNN input
+        return volume, label
 
 def collect_brains(folder_path, label_value = None):
     brains = {}

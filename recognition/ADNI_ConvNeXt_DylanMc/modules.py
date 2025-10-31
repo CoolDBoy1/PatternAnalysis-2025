@@ -3,11 +3,13 @@ import torch
 import torch.nn as nn
 from timm.layers import DropPath
 
+# Permute for LayerNorm: moves channel dim to last for nn.LayerNorm
 class PermuteForLN(nn.Module):
     def forward(self, x):
         # [B, C, D, H, W] -> [B, D, H, W, C]
         return x.permute(0, 2, 3, 4, 1)
 
+# Permute back to original 3D CNN format: [B, D, H, W, C] -> [B, C, D, H, W]
 class PermuteBack(nn.Module):
     def forward(self, x):
         # [B, D, H, W, C] -> [B, C, D, H, W]
@@ -40,6 +42,8 @@ class ConvNeXt(nn.Module):
         self.downsample_layers = nn.ModuleList()
         self.stages = nn.ModuleList()
         
+        # stem: initial downsampling layer
+        # Kernel size (1,4,4) reduces spatial dimensions, keeps depth intact
         stem = nn.Sequential(
             nn.Conv3d(in_chans, dims[0], kernel_size=(1,4,4), stride=(1,4,4)),  # downsample
             PermuteForLN(),
@@ -48,9 +52,12 @@ class ConvNeXt(nn.Module):
         )
         self.downsample_layers.append(stem)
         
+        # dp_rates: drop path rate for each block, linearly increasing from 0 to drop_rate
         dp_rates=[x.item() for x in torch.linspace(0, drop_rate, sum(depths))] 
+        
         cur = 0
         for i in range(len(depths)):
+            # Downsampling between stages: halves spatial resolution, increases channels
             stage = nn.Sequential(
                 *[ConvNeXtBlock3D(dims[i], drop_rate=dp_rates[cur + j]) for j in range(depths[i])]
             )
@@ -58,6 +65,7 @@ class ConvNeXt(nn.Module):
             cur += depths[i]
             
             if i < len(depths) - 1:
+                # remaining downsampling layers
                 downsample_layer = nn.Sequential(
                     PermuteForLN(),
                     nn.LayerNorm(dims[i], eps=1e-6),
